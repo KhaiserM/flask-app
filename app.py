@@ -1,59 +1,46 @@
 from flask import Flask, request, jsonify
-import boto3
 import psycopg2
+import boto3
 import os
-from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
 # Database Connection
-DB_HOST = "your-rds-endpoint"
+DB_HOST = "flask-db.c123xyz.ap-south-1.rds.amazonaws.com"  # Replace with your RDS endpoint
 DB_NAME = "postgres"
 DB_USER = "admin"
 DB_PASS = "password123"
 
-conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS)
-cursor = conn.cursor()
-
-# Create table if not exists
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT,
-        file_url TEXT
+def get_db_connection():
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS
     )
-""")
-conn.commit()
+    return conn
 
-# S3 Configuration
-S3_BUCKET = "my-flask-app-bucket"
-S3_REGION = "ap-south-1"
-s3 = boto3.client('s3', region_name=S3_REGION)
+@app.route("/")
+def home():
+    return "Flask App Running!"
 
-# API: Upload a file
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files or 'username' not in request.form:
-        return jsonify({"error": "Missing file or username"}), 400
-    
-    file = request.files['file']
-    username = request.form['username']
-    
-    filename = secure_filename(file.filename)
-    s3.upload_fileobj(file, S3_BUCKET, filename)
-    file_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{filename}"
-
-    cursor.execute("INSERT INTO users (username, file_url) VALUES (%s, %s)", (username, file_url))
+@app.route("/data", methods=["POST"])
+def save_data():
+    data = request.json
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO my_table (name, email) VALUES (%s, %s)", (data["name"], data["email"]))
     conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"message": "Data saved!"})
 
-    return jsonify({"message": "File uploaded", "file_url": file_url})
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    file = request.files['file']
+    s3 = boto3.client('s3')
+    s3.upload_fileobj(file, "my-flask-app-bucket", file.filename)
+    return jsonify({"message": "File uploaded to S3!"})
 
-# API: Get all stored data
-@app.route('/users', methods=['GET'])
-def get_users():
-    cursor.execute("SELECT * FROM users")
-    users = cursor.fetchall()
-    return jsonify(users)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=80)
